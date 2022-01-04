@@ -38,6 +38,57 @@ g_nPortControl = 52985
 g_nPortImage = 52986
 buffersize = 1024
 
+def arr_to_bmp(arr):
+    """Convert array to 1 bit BMP, white wherever the array is nonzero, and return a
+    bytestring of the BMP data"""
+    binary_arr = 255 * (arr != 0).astype(np.uint8)
+    im = PIL.Image.fromarray(binary_arr, mode='L').convert('1')
+    f = BytesIO()
+    im.save(f, "BMP")
+    return f.getvalue()
+
+WIDTH = 1920
+HEIGHT = 1080
+
+BLANK_BMP = arr_to_bmp(np.zeros((HEIGHT, WIDTH)))
+
+class LuxbeamrDMD(IntermediateDevice):
+    description = 'Luxbeam DMD controller'
+    allowed_children = [ImageSet]
+    
+
+    max_instructions = 96
+    clock_limit = 4000
+    width = WIDTH
+    height = HEIGHT
+    
+    def __init__(self, name, parent_device, server = '192.168.1.100', port=21845):
+        IntermediateDevice.__init__(self, name, parent_device)
+        self.BLACS_connection = '%s:%d'%(server, port)
+        
+    def add_device(self, device):        
+        # run checks
+        
+        # if the device passes the checks, call the parent class function to add it as a child
+        Device.add_device(self, device)
+        
+        device.width = self.width
+        device.height = self.height
+                
+    def generate_code(self, hdf5_file):
+       
+        if len(self.child_devices) > 1:
+            raise LabscriptError("More than one set of images attached to the LightCrafter")
+        output = self.child_devices[0]
+        if len(output.raw_output) > self.max_instructions:
+            raise LabscriptError("Too many images for the LightCrafter. Your shot contains %s images"%len(output.raw_output))
+          
+        # Apparently you should use np.void for binary data in a h5 file. Then on the way out, we need to use data.tostring() to decode again.
+        out_table = np.void(output.raw_output)
+        grp = self.init_device_group(hdf5_file)
+        grp.create_dataset('IMAGE_TABLE',compression=config.compression,data=out_table)
+   
+
 '''
 @BLACS_tab
 class LightCrafterTab(DeviceTab):
@@ -53,11 +104,20 @@ class LightCrafterWorker(Worker):
                     
                     }
     
-    errors = {
+    errors = {}
+
+    def init(self):
+        global socket; import socket
+        global struct; import struct
+        self.host, self.port = self.server.split(':')
+        self.port = int(self.port)
+        self.smart_cache = {'IMAGE_TABLE': ''}
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.connect((self.host,self.port))
+        # Initialise it to a static image display
+        #self.send(self.send_packet_type['write'], self.command['display_mode'], self.display_mode['static'])
         
-        
-        
-        }
+        # self.program_manual({"None" : base64.b64encode(blank_bmp)})
     
     #From seq_writer
     
